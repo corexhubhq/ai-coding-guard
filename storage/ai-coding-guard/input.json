@@ -1,0 +1,13 @@
+{
+  "CHANGE_MANIFEST": {
+    "evidence": "API response slow (~2s)",
+    "root_cause": "missing index on user_id",
+    "fix": "add index on user_id column",
+    "prediction": {
+      "response_time": 500,
+      "test_pass": true,
+      "risk_level": "low"
+    }
+  },
+  "CODE_DIFF": "--- a/app/Models/User.php\n+++ b/app/Models/User.php\n@@ ..."
+}

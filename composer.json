@@ -1,0 +1,26 @@
+{
+  "name": "corexhubhq/ai-coding-guard",
+  "description": "AI coding guardrail for Laravel",
+  "type": "library",
+  "require": {
+    "php": ">=8.0",
+    "illuminate/support": "^11.0|^12.0|^13.0",
+    "illuminate/console": "^11.0|^12.0|^13.0",
+    "illuminate/contracts": "^11.0|^12.0|^13.0",
+    "illuminate/filesystem": "^11.0|^12.0|^13.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "AICodingGuard\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "AICodingGuard\\AiCodingGuardServiceProvider"
+      ]
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
