@@ -3,106 +3,153 @@
 namespace AICodingGuard\Appliers;
 
 use AICodingGuard\Contracts\CodeApplierInterface;
-use Illuminate\Support\Facades\File;
+use AICodingGuard\Exceptions\EnvironmentException;
+use AICodingGuard\Exceptions\PatchRejectedException;
+use AICodingGuard\Support\GuardStorage;
+use Symfony\Component\Process\Process;
 
+/**
+ * Applies diffs with `git apply` and undoes them with `git apply -R`.
+ *
+ * The applied patch is kept at $patchPath, so a rollback reverses exactly the
+ * hunks that were applied (including created and deleted files), and nothing
+ * else in the working tree.
+ */
 class GitPatchApplier implements CodeApplierInterface
 {
-    protected $backupPath;
+    public function __construct(
+        private readonly string $basePath,
+        private readonly string $patchPath,
+        private readonly bool $requireCleanTree = true,
+        private readonly ?string $storagePath = null,
+    ) {
+    }
 
-    public function __construct()
+    public function check(string $diff): void
     {
-        $this->backupPath = config('ai-coding-guard.backup_path');
+        $this->ensureRepository();
+
+        if ($this->requireCleanTree) {
+            $this->ensureCleanTree();
+        }
+
+        $file = $this->temporaryPatch($diff);
+
+        try {
+            $result = $this->git(['apply', '--check', '--whitespace=nowarn', $file]);
+        } finally {
+            @unlink($file);
+        }
+
+        if (! $result->isSuccessful()) {
+            throw new PatchRejectedException('CODE_DIFF does not apply cleanly: '.$this->output($result));
+        }
     }
 
     public function apply(string $diff): void
     {
-        // Backup current state
-        $this->createBackup();
+        $this->ensureRepository();
 
-        // Create temporary patch file
-        $patchFile = storage_path('ai-coding-guard/temp.patch');
-        
-        $this->ensureDirectory($patchFile);
-        
-        file_put_contents($patchFile, $diff);
+        GuardStorage::write($this->patchPath, $diff);
 
-        // Apply patch
-        $output = [];
-        $returnVar = 0;
-        
-        exec("git apply {$patchFile} 2>&1", $output, $returnVar);
+        $result = $this->git(['apply', '--whitespace=nowarn', $this->patchPath]);
 
-        // Clean up
-        @unlink($patchFile);
+        if (! $result->isSuccessful()) {
+            @unlink($this->patchPath);
 
-        if ($returnVar !== 0) {
-            throw new \Exception("Failed to apply patch: " . implode("\n", $output));
+            throw new PatchRejectedException('Failed to apply CODE_DIFF: '.$this->output($result));
         }
     }
 
     public function rollback(): void
     {
-        if (!file_exists($this->backupPath)) {
-            throw new \Exception("No backup found to rollback");
+        if (! $this->canRollback()) {
+            throw new EnvironmentException('Nothing to roll back: no applied patch found at '.$this->patchPath);
         }
 
-        $backup = json_decode(file_get_contents($this->backupPath), true);
+        $result = $this->git(['apply', '-R', '--whitespace=nowarn', $this->patchPath]);
 
-        if (!$backup || !isset($backup['files'])) {
-            throw new \Exception("Invalid backup format");
+        if (! $result->isSuccessful()) {
+            throw new EnvironmentException(
+                'Rollback failed, files were changed after the patch was applied. '
+                .'The patch is kept at '.$this->patchPath.' — revert it manually (git apply -R). Git said: '.$this->output($result)
+            );
         }
 
-        foreach ($backup['files'] as $file => $content) {
-            if ($content === null) {
-                // File was created, delete it
-                if (file_exists($file)) {
-                    unlink($file);
-                }
-            } else {
-                // Restore original content
-                $this->ensureDirectory($file);
-                file_put_contents($file, $content);
-            }
+        @unlink($this->patchPath);
+    }
+
+    public function canRollback(): bool
+    {
+        return is_file($this->patchPath);
+    }
+
+    private function ensureRepository(): void
+    {
+        $result = $this->git(['rev-parse', '--is-inside-work-tree']);
+
+        if (! $result->isSuccessful() || trim($result->getOutput()) !== 'true') {
+            throw new EnvironmentException("{$this->basePath} is not inside a git working tree; the guard needs git to apply and roll back changes safely.");
         }
     }
 
-    protected function createBackup(): void
+    private function ensureCleanTree(): void
     {
-        // Get changed files from git status
-        exec('git diff --name-only 2>&1', $files, $returnVar);
+        $command = ['status', '--porcelain', '--untracked-files=all', '--', '.'];
 
-        if ($returnVar !== 0) {
-            // If not a git repo, skip backup for now
-            // or implement file-based backup
-            return;
+        if ($exclude = $this->relativeStoragePath()) {
+            $command[] = ":(exclude){$exclude}";
         }
 
-        $backup = ['files' => [], 'created_at' => date('Y-m-d H:i:s')];
+        $result = $this->git($command);
 
-        foreach ($files as $file) {
-            $fullPath = base_path($file);
-            
-            if (file_exists($fullPath)) {
-                $backup['files'][$fullPath] = file_get_contents($fullPath);
-            } else {
-                $backup['files'][$fullPath] = null; // File will be created
-            }
+        if (! $result->isSuccessful()) {
+            throw new EnvironmentException('git status failed: '.$this->output($result));
         }
 
-        $this->ensureDirectory($this->backupPath);
-        
-        file_put_contents(
-            $this->backupPath,
-            json_encode($backup, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-        );
+        $dirty = trim($result->getOutput());
+
+        if ($dirty !== '') {
+            $files = implode(', ', array_slice(array_map(fn ($l) => trim(substr($l, 3)), explode("\n", $dirty)), 0, 10));
+
+            throw new EnvironmentException("Working tree is not clean ({$files}). Commit or stash your changes first, so a failed AI change can be rolled back without touching your work.");
+        }
     }
 
-    protected function ensureDirectory(string $file): void
+    private function relativeStoragePath(): ?string
     {
-        $dir = dirname($file);
-
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
+        if ($this->storagePath === null) {
+            return null;
         }
+
+        $base = rtrim(str_replace('\\', '/', realpath($this->basePath) ?: $this->basePath), '/').'/';
+        $storage = str_replace('\\', '/', realpath($this->storagePath) ?: $this->storagePath);
+
+        return str_starts_with($storage.'/', $base) ? rtrim(substr($storage, strlen($base)), '/') : null;
+    }
+
+    private function temporaryPatch(string $diff): string
+    {
+        $file = tempnam(sys_get_temp_dir(), 'ai-guard-');
+        file_put_contents($file, $diff);
+
+        return $file;
+    }
+
+    /**
+     * @param  list<string>  $arguments
+     */
+    private function git(array $arguments): Process
+    {
+        $process = new Process(['git', ...$arguments], $this->basePath);
+        $process->setTimeout(120);
+        $process->run();
+
+        return $process;
+    }
+
+    private function output(Process $process): string
+    {
+        return trim($process->getErrorOutput()."\n".$process->getOutput());
     }
 }

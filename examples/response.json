@@ -1,0 +1,18 @@
+{
+  "CHANGE_MANIFEST": {
+    "evidence": "tests/Feature/Filament/UserResourceTest::test_list_users fails: GET /admin/users returns 403 for a user with the users-read permission",
+    "root_cause": "UserPolicy::viewAny checks the users-list permission, but BasePolicy maps viewAny to {group}-read",
+    "fix": "Remove the viewAny override in UserPolicy so the BasePolicy mapping (users-read) is used",
+    "prediction": {
+      "expected_result": "UserResourceTest passes; no other test changes",
+      "risk_level": "low",
+      "metrics": {
+        "test_pass": true,
+        "failures": 0,
+        "errors": 0,
+        "duration_ms": { "max": 300000 }
+      }
+    }
+  },
+  "CODE_DIFF": "--- a/app/Policies/UserPolicy.php\n+++ b/app/Policies/UserPolicy.php\n@@ -10,11 +10,6 @@ class UserPolicy extends BasePolicy\n {\n     protected string $group = 'users';\n \n-    public function viewAny(User $user): bool\n-    {\n-        return $user->hasPermission('users-list');\n-    }\n-\n     public function assign(User $user): bool\n     {\n         return $user->hasPermission('user-grant');\n"
+}
