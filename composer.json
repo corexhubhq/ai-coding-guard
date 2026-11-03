@@ -1,18 +1,32 @@
 {
   "name": "corexhubhq/ai-coding-guard",
-  "description": "AI coding guardrail for Laravel",
+  "description": "Guardrail layer that makes AI coding agents state a hypothesis and a measurable prediction, then applies, tests, evaluates and learns from every change in a Laravel project.",
   "type": "library",
+  "license": "MIT",
+  "keywords": ["laravel", "ai", "guardrail", "llm", "claude", "code-review"],
   "require": {
-    "php": ">=8.0",
-    "illuminate/support": "^11.0|^12.0|^13.0",
+    "php": "^8.2",
     "illuminate/console": "^11.0|^12.0|^13.0",
     "illuminate/contracts": "^11.0|^12.0|^13.0",
-    "illuminate/filesystem": "^11.0|^12.0|^13.0"
+    "illuminate/support": "^11.0|^12.0|^13.0",
+    "symfony/process": "^7.0|^8.0"
+  },
+  "require-dev": {
+    "orchestra/testbench": "^9.0|^10.0|^11.0",
+    "phpunit/phpunit": "^11.0|^12.0"
   },
   "autoload": {
     "psr-4": {
       "AICodingGuard\\": "src/"
     }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "AICodingGuard\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit"
   },
   "extra": {
     "laravel": {
@@ -20,6 +34,9 @@
         "AICodingGuard\\AiCodingGuardServiceProvider"
       ]
     }
+  },
+  "config": {
+    "sort-packages": true
   },
   "minimum-stability": "stable",
   "prefer-stable": true
