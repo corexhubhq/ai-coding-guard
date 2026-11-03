@@ -23,7 +23,7 @@ An agent that guesses gets rolled back, even if the tests happen to pass.
 
 ## Requirements
 
-- PHP 8.2+, Laravel 11, 12 or 13
+- PHP 8.2+, Laravel 12 or 13 (Laravel 11 is end-of-life and every 11.x release has open security advisories)
 - `git` (the project must be a git working tree)
 - A test suite: `php artisan test`, Pest or PHPUnit (auto-detected)
 
